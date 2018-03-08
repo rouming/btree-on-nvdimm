@@ -1,0 +1,55 @@
+btree.c (w/ linear search inside block)
+
+NODESIZE 128
+
+   1 mln: 651 ms        1.5 mln/sec     71 mb rss
+  50 mln: 2334 ms       0.4 mln/sec     2745 mb rss
+ 100 mln: 2607 ms       0.4 mln/sec     5474 mb rss
+ 150 mln: 2560 ms       0.4 mln/sec     8202 mb rss
+ 200 mln: 3410 ms       0.3 mln/sec     10929 mb rss
+ 250 mln: 2291 ms       0.4 mln/sec     13658 mb rss
+ 300 mln: 2469 ms       0.4 mln/sec     16387 mb rss
+
+
+NODESIZE 512
+
+   1 mln: 401 ms        2487.8 thd/sec  53 mb rss
+  50 mln: 904 ms        1105.7 thd/sec  1851 mb rs
+ 100 mln: 1109 ms       901.3 thd/sec   3687 mb rss
+ 150 mln: 1068 ms       935.6 thd/sec   5521 mb rss
+ 200 ????
+ 250 mln: 1116 ms       896.0 thd/sec   9192 mb rss
+ 300 mln: 1135 ms       880.7 thd/sec   11026 mb rss
+
+
+NODESIZE 1024
+
+   1 mln: 449 ms        2226.5 thd/sec  51 mb rss
+  50 mln: 963 ms        1037.5 thd/sec  1771 mb rss
+ 100 mln: 1020 ms       980.1 thd/sec   3526 mb rss
+ 150 mln: 1048 ms       953.7 thd/sec   5268 mb rss
+ 200 mln: 1085 ms       921.3 thd/sec   7033 mb rss
+ 250 mln: 1098 ms       910.4 thd/sec   8764 mb rss
+ 300 mln: 1123 ms       889.8 thd/sec   10521 mb rss
+
+
+NODESIZE 2048
+
+   1 mln: 648 ms        1541.4 thd/sec  50 mb rss
+  50 mln: 1201 ms       832.2 thd/sec   1715 mb rss
+ 100 mln: 1252 ms       798.2 thd/sec   3411 mb rss
+ 150 mln: 1307 ms       764.9 thd/sec   5091 mb rss
+ 200 mln: 1320 ms       757.5 thd/sec   6804 mb rss
+ 250 mln: 1382 ms       723.1 thd/sec   8474 mb rss
+ 300 mln: 1362 ms       734.1 thd/sec   10168 mb rss
+
+
+NODESIZE 4096
+
+   1 mln: 852 ms        1172.6 thd/sec  49 mb rss
+  50 mln: 1455 ms       687.2 thd/sec   1696 mb rss
+ 100 mln: 1541 ms       648.5 thd/sec   3373 mb rss
+ 150 mln: 1595 ms       626.9 thd/sec   5036 mb rss
+ 200 mln: 1657 ms       603.3 thd/sec   6729 mb rss
+ 250 mln: 1683 ms       593.9 thd/sec   8383 mb rss
+ 300 mln: 1712 ms       583.9 thd/sec   10058 mb rss
