@@ -16,14 +16,44 @@
 #include "btree.h"
 
 #define MAX_UUIDS_PER_MEASURE 1000000
-#define MAX_UUIDS 300000000ull /* 300 mln */
+//#define MAX_UUIDS 300000000ull /* 300 mln */
+#define MAX_UUIDS MAX_UUIDS_PER_MEASURE
+
+static double clk_per_nsec;
 
 static inline unsigned long long nsecs(void)
 {
-    struct timespec ts = {0, 0};
+    struct timespec ts;
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ((unsigned long long)ts.tv_sec * 1000000000ull) + ts.tv_nsec;
+}
+
+static inline unsigned long long cpu_clock(void)
+{
+	unsigned int lo, hi;
+
+	__asm__ __volatile__("rdtsc" : "=a" (lo), "=d" (hi));
+	return ((unsigned long long) hi << 32ULL) | lo;
+}
+
+static void calibrate_cpu_clock(void)
+{
+	unsigned long long ns, clk;
+
+	ns = nsecs();
+	clk = cpu_clock();
+	usleep(100000);
+	clk = cpu_clock() - clk;
+	ns = nsecs() - ns;
+
+	clk_per_nsec = (double)clk / ns;
+}
+
+__attribute__((unused))
+static unsigned long long clock_to_nsecs(unsigned long long clk)
+{
+	return (double)clk / clk_per_nsec;
 }
 
 static unsigned long long task_get_rss(void)
@@ -67,6 +97,17 @@ static unsigned long long task_get_rss(void)
 	return rss;
 }
 
+extern void dump_btree(struct btree_head *head);
+
+static int cmp(int v1, int v2)
+{
+	if (v1 < v2)
+		return -1;
+	if (v1 > v2)
+		return 1;
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	unsigned long long ns, num, rss;
@@ -75,7 +116,84 @@ int main(int argc, char *argv[])
 	double thd_psec;
 	int i, rc;
 
+	calibrate_cpu_clock();
+
 	btree_init128(&btree);
+
+	if (0)
+	{
+		unsigned vals[] = {10, 5};
+		unsigned num = sizeof(vals)/sizeof(vals[0]);
+		int l, r, m;
+
+		unsigned key = 4;
+
+		l = 0;
+		r = num - 1;
+
+		while (l <= r) {
+			m = l + (r - l) / 2;
+			if (cmp(vals[m], key) > 0)
+				l = m + 1;
+			else
+				r = m - 1;
+		}
+		if (cmp(vals[m], key) > 0)
+			m += 1;
+
+		printf("%d\n", m);
+
+		return 0;
+	}
+
+	if (0)
+	{
+		unsigned long long keys[2];
+
+		keys[0] = 10;
+		keys[1] = 10;
+
+		rc = btree_insert128(&btree, keys[0], keys[1], (void *)0xaaaa, 0);
+		assert(rc == 0);
+
+
+		keys[0] = 5;
+		keys[1] = 5;
+
+		rc = btree_insert128(&btree, keys[0], keys[1], (void *)0xaaaa, 0);
+		assert(rc == 0);
+
+
+		keys[0] = 4;
+		keys[1] = 4;
+
+		rc = btree_insert128(&btree, keys[0], keys[1], (void *)0xaaaa, 0);
+		assert(rc == 0);
+
+
+		dump_btree(&btree.h);
+
+		return 0;
+	}
+
+
+	if (0)
+	{
+		unsigned long long keys[2];
+		int i;
+
+		for (i = 1; i <= 6; i++) {
+			keys[0] = i;
+			keys[1] = i;
+
+			rc = btree_insert128(&btree, keys[0], keys[1], (void *)0xaaaa, 0);
+			assert(rc == 0);
+		}
+
+		dump_btree(&btree.h);
+
+		return 0;
+	}
 
 	many_uuids = calloc(MAX_UUIDS_PER_MEASURE, sizeof(uuid_t));
 	assert(many_uuids);

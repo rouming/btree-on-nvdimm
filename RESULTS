@@ -53,3 +53,62 @@ NODESIZE 4096
  200 mln: 1657 ms       603.3 thd/sec   6729 mb rss
  250 mln: 1683 ms       593.9 thd/sec   8383 mb rss
  300 mln: 1712 ms       583.9 thd/sec   10058 mb rss
+
+
+
+btree.c (w/ bsearch inside block + block size in variable)
+
+NODESIZE 128
+
+
+   1 mln: 937 ms        1066.4 thd/sec  71 mb rss
+  51 mln: 1982 ms       504.4 thd/sec   2800 mb rss
+ 101 mln: 2177 ms       459.3 thd/sec   5528 mb rss
+ 151 mln: 2274 ms       439.6 thd/sec   8256 mb rss
+ 201 mln: 2340 ms       427.3 thd/sec   10984 mb rss
+ 251 mln: 2379 ms       420.2 thd/sec   13713 mb rss
+ 300 mln: 2620 ms       381.6 thd/sec   16387 mb rss
+
+
+NODESIZE 512
+
+   1 mln: 550 ms        1817.8 thd/sec  53 mb rss
+  50 mln: 1185 ms       843.8 thd/sec   1852 mb rss
+ 100 mln: 1271 ms       786.7 thd/sec   3687 mb rss
+ 150 mln: 1322 ms       756.2 thd/sec   5521 mb rss
+ 200 mln: 1362 ms       733.7 thd/sec   7357 mb rss
+ 250 mln: 1397 ms       715.8 thd/sec   9191 mb rss
+ 300 mln: 1416 ms       706.0 thd/sec   11025 mb rss
+
+
+NODESIZE 1024
+
+   1 mln: 551 ms        1812.9 thd/sec  51 mb rss
+  50 mln: 1133 ms       882.6 thd/sec   1771 mb rss
+ 100 mln: 1227 ms       815.0 thd/sec   3525 mb rss
+ 150 mln: 1291 ms       774.4 thd/sec   5268 mb rss
+ 200 mln: 1304 ms       766.7 thd/sec   7033 mb rss
+ 250 mln: 1314 ms       760.7 thd/sec   8765 mb rss
+ 300 mln: 1347 ms       742.1 thd/sec   10521 mb rss
+
+
+
+NODESIZE 2048
+
+   1 mln: 605 ms        1652.5 thd/sec  50 mb rss
+  50 mln: 1198 ms       834.2 thd/sec   1714 mb rss
+ 100 mln: 1271 ms       786.5 thd/sec   3411 mb rss
+ 150 mln: 1287 ms       777.0 thd/sec   5088 mb rss
+ 200 mln: 1346 ms       742.5 thd/sec   6804 mb rss
+ 250 mln: 1346 ms       742.9 thd/sec   8478 mb rss
+ 300 mln: 1383 ms       723.1 thd/sec   10164 mb rss
+
+NODESIZE 4096
+
+   1 mln: 752 ms        1329.2 thd/sec  49 mb rss
+  50 mln: 1387 ms       720.8 thd/sec   1698 mb rss
+ 100 mln: 1437 ms       695.8 thd/sec   3377 mb rss
+ 150 mln: 1468 ms       680.9 thd/sec   5034 mb rss
+ 200 mln: 1506 ms       663.6 thd/sec   6734 mb rss
+ 250 mln: 1507 ms       663.4 thd/sec   8378 mb rss
+ 300 mln: 1554 ms       643.3 thd/sec   10054 mb rss

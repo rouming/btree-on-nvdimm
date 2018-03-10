@@ -46,7 +46,8 @@
 //#include <linux/module.h>
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define NODESIZE MAX(L1_CACHE_BYTES, 128)
+//#define NODESIZE MAX(L1_CACHE_BYTES, 128)
+#define NODESIZE 1024
 
 struct btree_geo {
 	int keylen;
@@ -56,23 +57,23 @@ struct btree_geo {
 
 struct btree_geo btree_geo32 = {
 	.keylen = 1,
-	.no_pairs = NODESIZE / sizeof(long) / 2,
-	.no_longs = NODESIZE / sizeof(long) / 2,
+	.no_pairs = (NODESIZE-1) / sizeof(long) / 2,
+	.no_longs = (NODESIZE-1) / sizeof(long) / 2,
 };
 EXPORT_SYMBOL_GPL(btree_geo32);
 
 #define LONG_PER_U64 (64 / BITS_PER_LONG)
 struct btree_geo btree_geo64 = {
 	.keylen = LONG_PER_U64,
-	.no_pairs = NODESIZE / sizeof(long) / (1 + LONG_PER_U64),
-	.no_longs = LONG_PER_U64 * (NODESIZE / sizeof(long) / (1 + LONG_PER_U64)),
+	.no_pairs = (NODESIZE-1) / sizeof(long) / (1 + LONG_PER_U64),
+	.no_longs = LONG_PER_U64 * ((NODESIZE-1) / sizeof(long) / (1 + LONG_PER_U64)),
 };
 EXPORT_SYMBOL_GPL(btree_geo64);
 
 struct btree_geo btree_geo128 = {
 	.keylen = 2 * LONG_PER_U64,
-	.no_pairs = NODESIZE / sizeof(long) / (1 + 2 * LONG_PER_U64),
-	.no_longs = 2 * LONG_PER_U64 * (NODESIZE / sizeof(long) / (1 + 2 * LONG_PER_U64)),
+	.no_pairs = (NODESIZE-1) / sizeof(long) / (1 + 2 * LONG_PER_U64),
+	.no_longs = 2 * LONG_PER_U64 * ((NODESIZE-1) / sizeof(long) / (1 + 2 * LONG_PER_U64)),
 };
 EXPORT_SYMBOL_GPL(btree_geo128);
 
@@ -170,6 +171,20 @@ static void setval(struct btree_geo *geo, unsigned long *node, int n,
 	node[geo->no_longs + n] = (unsigned long) val;
 }
 
+static unsigned char get_sz(struct btree_geo *geo, unsigned long *node)
+{
+	unsigned char sz = *(unsigned char *)&node[geo->no_longs + geo->no_pairs];
+//	printf("get_sz() %d\n", sz);
+	return sz;
+}
+
+static void set_sz(struct btree_geo *geo,  unsigned long *node, unsigned char sz)
+{
+//	printf("set_sz(%d), no_longs=%d, no_pairs=%d\n",
+//		   sz, geo->no_longs, geo->no_pairs);
+	*(unsigned char *)&node[geo->no_longs + geo->no_pairs] = sz;
+}
+
 static void clearpair(struct btree_geo *geo, unsigned long *node, int n)
 {
 	longset(bkey(geo, node, n), 0, geo->keylen);
@@ -230,6 +245,10 @@ EXPORT_SYMBOL_GPL(btree_last);
 static int keycmp(struct btree_geo *geo, unsigned long *node, int pos,
 		  unsigned long *key)
 {
+	{
+//		u64 *key = bkey(geo, node, pos);
+//		printf("   %ld,%ld, pos=%d\n", key[0], key[1], pos);
+	}
 	return longcmp(bkey(geo, node, pos), key, geo->keylen);
 }
 
@@ -366,26 +385,65 @@ miss:
 }
 EXPORT_SYMBOL_GPL(btree_get_prev);
 
+static int __bsearch(struct btree_geo *geo, unsigned long *node,
+		     unsigned long *key)
+{
+	unsigned num = get_sz(geo, node);
+	int l, r, m;
+
+	if (!num)
+		return 0;
+
+	l = 0;
+	r = num - 1;
+
+	while (l <= r) {
+		m = l + (r - l) / 2;
+		if (longcmp(bkey(geo, node, m), key, geo->keylen) > 0)
+			l = m + 1;
+		else
+			r = m - 1;
+	}
+	if (longcmp(bkey(geo, node, m), key, geo->keylen) > 0)
+		m += 1;
+
+	return m;
+}
+
 static int getpos(struct btree_geo *geo, unsigned long *node,
 		unsigned long *key)
 {
 	int i;
 
+	i = __bsearch(geo, node, key);
+
+	/*
+
 	for (i = 0; i < geo->no_pairs; i++) {
 		if (keycmp(geo, node, i, key) <= 0)
 			break;
 	}
+	*/
+
+//	printf(">> getpos node=%p, key=%ld, i=%d:\n", node, key[0], i);
+
 	return i;
 }
 
 static int getfill(struct btree_geo *geo, unsigned long *node, int start)
 {
+	return (int)get_sz(geo, node);
+
+	//XXX
+	/*
 	int i;
 
-	for (i = start; i < geo->no_pairs; i++)
+	for (i = start; i < geo->no_pairs; i++) {
 		if (!bval(geo, node, i))
 			break;
+	}
 	return i;
+	*/
 }
 
 /*
@@ -398,10 +456,16 @@ static unsigned long *find_level(struct btree_head *head, struct btree_geo *geo,
 	int i, height;
 
 	for (height = head->height; height > level; height--) {
+//		__builtin_prefetch((void *)node);
+		__builtin_prefetch(node);
+//		__builtin_prefetch(node + 10);
+//		__builtin_prefetch(node + 20);
+		i = __bsearch(geo, node, key);
+		/*
 		for (i = 0; i < geo->no_pairs; i++)
 			if (keycmp(geo, node, i, key) <= 0)
 				break;
-
+		*/
 		if ((i == geo->no_pairs) || !bval(geo, node, i)) {
 			/* right-most key is too large, update it */
 			/* FIXME: If the right-most key on higher levels is
@@ -412,8 +476,68 @@ static unsigned long *find_level(struct btree_head *head, struct btree_geo *geo,
 		BUG_ON(i < 0);
 		node = bval(geo, node, i);
 	}
+	__builtin_prefetch(node);
+//	__builtin_prefetch(node + 10);
+//	__builtin_prefetch(node + 20);
+
 	BUG_ON(!node);
+
 	return node;
+}
+
+static void dump_node(unsigned long *node, struct btree_geo *geo)
+{
+	u64 *key, *val;
+	int i;
+
+	printf("%p: ", node);
+	for (i = 0; i < geo->no_pairs; i++) {
+		key = bkey(geo, node, i);
+		val = bval(geo, node, i);
+		if (val)
+			printf("k%d.%04ld ", i, *key);
+		else
+			printf("k%d.NULL ", i);
+	}
+	for (i = 0; i < geo->no_pairs; i++) {
+		key = bkey(geo, node, i);
+		val = bval(geo, node, i);
+		if (val)
+			printf("v%d.%04lx ", i, (unsigned long)val);
+		else
+			printf("v%d.NULL ", i);
+	}
+	printf("\n");
+}
+
+void __dump_btree(unsigned long *node, int height, struct btree_geo *geo)
+{
+	int i;
+
+	dump_node(node, geo);
+
+	if (!height)
+		return;
+
+	for (i = 0; i < geo->no_pairs; i++) {
+		u64 *ptr = bval(geo, node, i);
+		if (ptr)
+			__dump_btree(ptr, height - 1, geo);
+	}
+}
+
+void dump_btree(struct btree_head *head)
+{
+	int height = head->height;
+
+	printf("keylen=%d\n", btree_geo128.keylen);
+	printf("no_pairs=%d\n", btree_geo128.no_pairs);
+	printf("no_longs=%d\n", btree_geo128.no_longs);
+
+	if (height == 0)
+		return;
+
+	__dump_btree(head->node, height - 1, &btree_geo128);
 }
 
 static int btree_grow(struct btree_head *head, struct btree_geo *geo,
@@ -426,9 +550,14 @@ static int btree_grow(struct btree_head *head, struct btree_geo *geo,
 	if (!node)
 		return -ENOMEM;
 	if (head->node) {
+		/* Get first free slot */
 		fill = getfill(geo, head->node, 0);
+//		printf(">> %s: fill=%d, key=%ld\n", __func__, fill,
+//			   bkey(geo, head->node, fill - 1)[0]);
+		/* Get last key */
 		setkey(geo, node, 0, bkey(geo, head->node, fill - 1));
 		setval(geo, node, 0, head->node);
+		set_sz(geo, node, 1);
 	}
 	head->node = node;
 	head->height++;
@@ -495,11 +624,14 @@ retry:
 			setval(geo, node, i, bval(geo, node, i + fill / 2));
 			clearpair(geo, node, i + fill / 2);
 		}
+		set_sz(geo, new, i);
+
 		if (fill & 1) {
 			setkey(geo, node, i, bkey(geo, node, fill - 1));
 			setval(geo, node, i, bval(geo, node, fill - 1));
 			clearpair(geo, node, fill - 1);
 		}
+		set_sz(geo, node, fill - i);
 		goto retry;
 	}
 	BUG_ON(fill >= geo->no_pairs);
@@ -511,6 +643,9 @@ retry:
 	}
 	setkey(geo, node, pos, key);
 	setval(geo, node, pos, val);
+	set_sz(geo, node, fill+1);
+
+//	dump_node(node, geo);
 
 	return 0;
 }
