@@ -14,6 +14,7 @@
 #include <uuid/uuid.h>
 
 #include "btree.h"
+#include "libpmemobj/tree_map/btree_map.h"
 
 #define MAX_UUIDS_PER_MEASURE 1000000
 //#define MAX_UUIDS 300000000ull /* 300 mln */
@@ -108,7 +109,7 @@ static int cmp(int v1, int v2)
 	return 0;
 }
 
-int main(int argc, char *argv[])
+int FFF_main(int argc, char *argv[])
 {
 	unsigned long long ns, num, rss;
 	struct btree_head128 btree;
@@ -220,6 +221,43 @@ int main(int argc, char *argv[])
 		       ns/1000/1000, thd_psec, rss >> 20);
 	}
 
+
+	return 0;
+}
+
+POBJ_LAYOUT_BEGIN(btree_on_nvdimm);
+POBJ_LAYOUT_ROOT(two_lists, struct btree_on_nvdimm_root);
+POBJ_LAYOUT_END(btree_on_nvdimm);
+
+struct btree_on_nvdimm_root {
+	TOID(struct btree_map) btree;
+};
+
+int main(int argc, char *argv[])
+{
+	const char *path = "./mem";
+	PMEMobjpool *pop;
+
+	if (access(path, F_OK) != 0) {
+		if ((pop = pmemobj_create(path,
+								  POBJ_LAYOUT_NAME(btree_on_nvdimm),
+								  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			perror("failed to create pool\n");
+			return 1;
+		}
+	} else {
+		if ((pop = pmemobj_open(path,
+								POBJ_LAYOUT_NAME(btree_on_nvdimm))) == NULL) {
+			perror("failed to open pool\n");
+			return 1;
+		}
+	}
+
+	TOID(struct btree_on_nvdimm_root) r =
+		POBJ_ROOT(pop, struct btree_on_nvdimm_root);
+
+	printf("%p, oid.pool_uuid_lo=%lx, oid.off=%lx\n",
+		   D_RW(r), r.oid.pool_uuid_lo, r.oid.off);
 
 	return 0;
 }
