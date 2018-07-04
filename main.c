@@ -24,10 +24,10 @@ static double clk_per_nsec;
 
 static inline unsigned long long nsecs(void)
 {
-    struct timespec ts;
+	struct timespec ts;
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ((unsigned long long)ts.tv_sec * 1000000000ull) + ts.tv_nsec;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((unsigned long long)ts.tv_sec * 1000000000ull) + ts.tv_nsec;
 }
 
 static inline unsigned long long cpu_clock(void)
@@ -240,14 +240,14 @@ int main(int argc, char *argv[])
 
 	if (access(path, F_OK) != 0) {
 		if ((pop = pmemobj_create(path,
-								  POBJ_LAYOUT_NAME(btree_on_nvdimm),
-								  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+					  POBJ_LAYOUT_NAME(btree_on_nvdimm),
+					  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			perror("failed to create pool\n");
 			return 1;
 		}
 	} else {
 		if ((pop = pmemobj_open(path,
-								POBJ_LAYOUT_NAME(btree_on_nvdimm))) == NULL) {
+					POBJ_LAYOUT_NAME(btree_on_nvdimm))) == NULL) {
 			perror("failed to open pool\n");
 			return 1;
 		}
@@ -257,7 +257,7 @@ int main(int argc, char *argv[])
 		POBJ_ROOT(pop, struct btree_on_nvdimm_root);
 
 	printf("%p, oid.pool_uuid_lo=%lx, oid.off=%lx\n",
-		   D_RW(r), r.oid.pool_uuid_lo, r.oid.off);
+	       D_RW(r), r.oid.pool_uuid_lo, r.oid.off);
 
 	return 0;
 }
