@@ -13,12 +13,17 @@
 #include <unistd.h>
 #include <uuid/uuid.h>
 
+#include "types.h"
 #include "btree.h"
 #include "libpmemobj/tree_map/btree_map.h"
 
-#define MAX_UUIDS_PER_MEASURE 1000000
+//#define MAX_UUIDS_PER_MEASURE 1000000
 //#define MAX_UUIDS 300000000ull /* 300 mln */
-#define MAX_UUIDS MAX_UUIDS_PER_MEASURE
+//#define MAX_UUIDS MAX_UUIDS_PER_MEASURE
+
+#define MAX_UUIDS_PER_MEASURE 100
+#define MAX_UUIDS 300
+
 
 static double clk_per_nsec;
 
@@ -109,18 +114,200 @@ static int cmp(int v1, int v2)
 	return 0;
 }
 
-int FFF_main(int argc, char *argv[])
+struct tree_ops {
+	int (*init)(struct tree_ops *ops);
+	void (*deinit)(struct tree_ops *ops);
+	int (*insert)(struct tree_ops *ops, uint64_t keys[2], uint64_t val);
+};
+
+struct mem_btree {
+	struct tree_ops ops;
+	struct btree_head128 btree;
+};
+
+static int mem_btree_init(struct tree_ops *ops)
+{
+	struct mem_btree *btree;
+
+	btree = container_of(ops, typeof(*btree), ops);
+	btree_init128(&btree->btree);
+
+	return 0;
+}
+
+static void mem_btree_deinit(struct tree_ops *ops)
+{
+}
+
+static int mem_btree_insert(struct tree_ops *ops, uint64_t keys[2],
+			    uint64_t val)
+{
+	struct mem_btree *btree;
+
+	btree = container_of(ops, typeof(*btree), ops);
+	return btree_insert128(&btree->btree, keys[0], keys[1], (void *)val, 0);
+}
+
+static struct tree_ops mem_btree_ops = {
+	.init   = mem_btree_init,
+	.deinit = mem_btree_deinit,
+	.insert = mem_btree_insert
+};
+
+POBJ_LAYOUT_BEGIN(pmem_btree_root);
+POBJ_LAYOUT_ROOT(two_lists, struct pmem_btree_root);
+POBJ_LAYOUT_END(pmem_btree_root);
+
+struct pmem_btree_root {
+	TOID(struct btree_map) btree;
+};
+
+struct pmem_btree {
+	struct tree_ops ops;
+	PMEMobjpool *pop;
+	TOID(struct pmem_btree_root) root;
+};
+
+static int pmem_count(uint64_t key, PMEMoid value, void *arg)
+{
+	unsigned *cnt = arg;
+
+	++*cnt;
+
+	return 0;
+}
+
+static int pmem_btree_init(struct tree_ops *ops)
+{
+	struct pmem_btree *btree;
+	const char *path = "./mem";
+	PMEMobjpool *pop;
+	int rc;
+
+	//XXX
+//	unlink(path);
+
+	/* Do not msync() */
+	setenv("PMEM_IS_PMEM_FORCE", "1", 1);
+
+	btree = container_of(ops, typeof(*btree), ops);
+
+	if (access(path, F_OK) != 0) {
+		if ((pop = pmemobj_create(path,
+					  POBJ_LAYOUT_NAME(btree_on_nvdimm),
+					  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			perror("failed to create pool\n");
+			return -1;
+		}
+	} else {
+		if ((pop = pmemobj_open(path,
+					POBJ_LAYOUT_NAME(btree_on_nvdimm))) == NULL) {
+			perror("failed to open pool\n");
+			return -1;
+		}
+	}
+
+	btree->pop  = pop;
+	btree->root = POBJ_ROOT(pop, struct pmem_btree_root);
+
+	rc = btree_map_check(btree->pop, D_RO(btree->root)->btree);
+	if (rc)
+		rc = btree_map_create(btree->pop, &D_RW(btree->root)->btree, NULL);
+	else {
+		unsigned cnt = 0;
+		btree_map_foreach(btree->pop, D_RO(btree->root)->btree,
+				  pmem_count, &cnt);
+		printf(">>> count=%d\n", cnt);
+	}
+
+	return rc;
+}
+
+static void pmem_btree_deinit(struct tree_ops *ops)
+{
+	struct pmem_btree *btree;
+
+	btree = container_of(ops, typeof(*btree), ops);
+	pmemobj_close(btree->pop);
+}
+
+static int pmem_btree_insert(struct tree_ops *ops, uint64_t keys[2],
+			     uint64_t val)
+{
+	struct pmem_btree *btree;
+	int rc;
+
+	btree = container_of(ops, typeof(*btree), ops);
+
+	rc = btree_map_lookup(btree->pop, D_RO(btree->root)->btree, keys[0]);
+	if (rc) {
+		printf(">>>> exists: %lx\n", keys[0]);
+		assert(0);
+	}
+
+	return btree_map_insert(btree->pop, D_RO(btree->root)->btree,
+				keys[0], OID_NULL);
+}
+
+static struct tree_ops pmem_btree_ops = {
+	.init   = pmem_btree_init,
+	.deinit = pmem_btree_deinit,
+	.insert = pmem_btree_insert
+};
+
+int main(int argc, char *argv[])
 {
 	unsigned long long ns, num, rss;
-	struct btree_head128 btree;
 	uuid_t *many_uuids;
 	double thd_psec;
 	int i, rc;
 
+	__attribute__((unused))
+	struct mem_btree btree1 = {
+		.ops = mem_btree_ops
+	};
+
+	struct pmem_btree btree = {
+		.ops = pmem_btree_ops
+	};
+
 	calibrate_cpu_clock();
 
-	btree_init128(&btree);
+	rc = btree.ops.init(&btree.ops);
+	assert(rc == 0);
 
+	many_uuids = calloc(MAX_UUIDS_PER_MEASURE, sizeof(uuid_t));
+	assert(many_uuids);
+
+	for (num = 0; num < MAX_UUIDS; num += MAX_UUIDS_PER_MEASURE) {
+		for (i = 0; i < MAX_UUIDS_PER_MEASURE; i++) {
+			uuid_generate(many_uuids[i]);
+		}
+
+		ns = nsecs();
+		for (i = 0; i < MAX_UUIDS_PER_MEASURE; i++) {
+			u64 *keys = (void *)many_uuids[i];
+			rc = btree.ops.insert(&btree.ops, keys, 666);
+			assert(rc == 0);
+		}
+		ns = nsecs() - ns;
+
+		thd_psec = (double)(MAX_UUIDS_PER_MEASURE/1000.0)/
+			((double)ns / 1000000000.0);
+		rss = task_get_rss();
+
+		printf("%4.0f mln: %lld ms\t%4.1f thd/sec\t%lld mb rss\n",
+		       (num + MAX_UUIDS_PER_MEASURE) / 1000000.0,
+		       ns/1000/1000, thd_psec, rss >> 20);
+	}
+
+	btree.ops.deinit(&btree.ops);
+
+	return 0;
+}
+
+int experiments_main()
+{
 	if (0)
 	{
 		unsigned vals[] = {10, 5};
@@ -149,7 +336,11 @@ int FFF_main(int argc, char *argv[])
 
 	if (0)
 	{
+		struct btree_head128 btree;
 		unsigned long long keys[2];
+		int rc;
+
+		btree_init128(&btree);
 
 		keys[0] = 10;
 		keys[1] = 10;
@@ -180,8 +371,9 @@ int FFF_main(int argc, char *argv[])
 
 	if (0)
 	{
+		struct btree_head128 btree;
 		unsigned long long keys[2];
-		int i;
+		int i, rc;
 
 		for (i = 1; i <= 6; i++) {
 			keys[0] = i;
@@ -195,69 +387,6 @@ int FFF_main(int argc, char *argv[])
 
 		return 0;
 	}
-
-	many_uuids = calloc(MAX_UUIDS_PER_MEASURE, sizeof(uuid_t));
-	assert(many_uuids);
-
-	for (num = 0; num < MAX_UUIDS; num += MAX_UUIDS_PER_MEASURE) {
-		for (i = 0; i < MAX_UUIDS_PER_MEASURE; i++) {
-			uuid_generate(many_uuids[i]);
-		}
-
-		ns = nsecs();
-		for (i = 0; i < MAX_UUIDS_PER_MEASURE; i++) {
-			u64 *keys = (void *)many_uuids[i];
-			rc = btree_insert128(&btree, keys[0], keys[1], (void *)666, 0);
-			assert(rc == 0);
-		}
-		ns = nsecs() - ns;
-
-		thd_psec = (double)(MAX_UUIDS_PER_MEASURE/1000.0)/
-			((double)ns / 1000000000.0);
-		rss = task_get_rss();
-
-		printf("%4.0f mln: %lld ms\t%4.1f thd/sec\t%lld mb rss\n",
-		       (num + MAX_UUIDS_PER_MEASURE) / 1000000.0,
-		       ns/1000/1000, thd_psec, rss >> 20);
-	}
-
-
-	return 0;
-}
-
-POBJ_LAYOUT_BEGIN(btree_on_nvdimm);
-POBJ_LAYOUT_ROOT(two_lists, struct btree_on_nvdimm_root);
-POBJ_LAYOUT_END(btree_on_nvdimm);
-
-struct btree_on_nvdimm_root {
-	TOID(struct btree_map) btree;
-};
-
-int main(int argc, char *argv[])
-{
-	const char *path = "./mem";
-	PMEMobjpool *pop;
-
-	if (access(path, F_OK) != 0) {
-		if ((pop = pmemobj_create(path,
-					  POBJ_LAYOUT_NAME(btree_on_nvdimm),
-					  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
-			perror("failed to create pool\n");
-			return 1;
-		}
-	} else {
-		if ((pop = pmemobj_open(path,
-					POBJ_LAYOUT_NAME(btree_on_nvdimm))) == NULL) {
-			perror("failed to open pool\n");
-			return 1;
-		}
-	}
-
-	TOID(struct btree_on_nvdimm_root) r =
-		POBJ_ROOT(pop, struct btree_on_nvdimm_root);
-
-	printf("%p, oid.pool_uuid_lo=%lx, oid.off=%lx\n",
-	       D_RW(r), r.oid.pool_uuid_lo, r.oid.off);
 
 	return 0;
 }
