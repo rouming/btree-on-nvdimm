@@ -4,6 +4,8 @@
 //#include <linux/kernel.h>
 //#include <linux/mempool.h>
 
+#include <libpmemobj.h>
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -44,6 +46,9 @@ typedef uint32_t u32;
  * number of keys and values (N) is geo->no_pairs.
  */
 
+typedef uint64_t pmem_ptr_t;
+#define NULL_PTR 0
+
 /**
  * struct pmem_btree_head - btree head
  *
@@ -53,7 +58,7 @@ typedef uint32_t u32;
  */
 struct pmem_btree_head {
 	unsigned long *node;
-//	mempool_t *mempool;
+	PMEMobjpool *pop;
 	int height;
 };
 
@@ -95,7 +100,7 @@ struct pmem_btree_geo;
  * (-%ENOMEM) when memory allocation fails.
  *
  */
-int __must_check pmem_btree_init(struct pmem_btree_head *head);
+int __must_check pmem_btree_init(PMEMobjpool *pop, struct pmem_btree_head *head);
 
 /**
  * pmem_btree_destroy - destroy mempool

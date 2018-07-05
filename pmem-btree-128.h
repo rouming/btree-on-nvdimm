@@ -10,9 +10,10 @@ struct pmem_btree_head128 { struct pmem_btree_head h; };
   }
 */
 
-static inline int pmem_btree_init128(struct pmem_btree_head128 *head)
+static inline int pmem_btree_init128(PMEMobjpool *pop,
+				     struct pmem_btree_head128 *head)
 {
-	return pmem_btree_init(&head->h);
+	return pmem_btree_init(pop, &head->h);
 }
 
 static inline void pmem_btree_destroy128(struct pmem_btree_head128 *head)

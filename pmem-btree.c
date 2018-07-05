@@ -40,12 +40,13 @@
  */
 
 #include "pmem-btree.h"
+#include <libpmemobj/obj.h>
+
 //#include <linux/cache.h>
 //#include <linux/kernel.h>
 //#include <linux/slab.h>
 //#include <linux/module.h>
 
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
 //#define NODESIZE MAX(L1_CACHE_BYTES, 128)
 #define NODESIZE 1024
 
@@ -193,27 +194,20 @@ static void clearpair(struct pmem_btree_geo *geo, unsigned long *node, int n)
 	node[geo->no_longs + n] = 0;
 }
 
-static inline void __pmem_btree_init(struct pmem_btree_head *head)
+static inline void __pmem_btree_init(PMEMobjpool *pop,
+				     struct pmem_btree_head *head)
 {
-	head->node = NULL;
+	//XXX TX
+
+	head->node = NULL_PTR;
 	head->height = 0;
+	head->pop = pop;
 }
 
-/*
-void pmem_btree_init_mempool(struct pmem_btree_head *head, mempool_t *mempool)
+int pmem_btree_init(PMEMobjpool *pop, struct pmem_btree_head *head)
 {
-	__pmem_btree_init(head);
-	head->mempool = mempool;
-}
-EXPORT_SYMBOL_GPL(pmem_btree_init_mempool);
-*/
+	__pmem_btree_init(pop, head);
 
-int pmem_btree_init(struct pmem_btree_head *head)
-{
-	__pmem_btree_init(head);
-//	head->mempool = mempool_create(0, pmem_btree_alloc, pmem_btree_free, NULL);
-//	if (!head->mempool)
-//		return -ENOMEM;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pmem_btree_init);
@@ -802,12 +796,13 @@ int pmem_btree_merge(struct pmem_btree_head *target,
 	int err;
 
 	BUG_ON(target == victim);
+	BUG_ON(target->pop != victim->pop);
 
 	if (!(target->node)) {
 		/* target is empty, just copy fields over */
 		target->node = victim->node;
 		target->height = victim->height;
-		__pmem_btree_init(victim);
+		__pmem_btree_init(target->pop, victim);
 		return 0;
 	}
 
@@ -919,23 +914,3 @@ size_t pmem_btree_visitor(struct pmem_btree_head *head, struct pmem_btree_geo *g
 	return count;
 }
 EXPORT_SYMBOL_GPL(pmem_btree_visitor);
-
-size_t pmem_btree_grim_visitor(struct pmem_btree_head *head,
-			       struct pmem_btree_geo *geo,
-			       unsigned long opaque,
-			       void (*func)(void *elem, unsigned long opaque,
-					    unsigned long *key,
-					    size_t index, void *func2),
-			       void *func2)
-{
-	size_t count = 0;
-
-	if (!func2)
-		func = empty;
-	if (head->node)
-		count = __pmem_btree_for_each(head, geo, head->node, opaque, func,
-				func2, 1, head->height, 0);
-	__pmem_btree_init(head);
-	return count;
-}
-EXPORT_SYMBOL_GPL(pmem_btree_grim_visitor);

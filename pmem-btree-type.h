@@ -18,9 +18,9 @@ static inline void BTREE_FN(init_mempool)(BTREE_TYPE_HEAD *head,
 }
 */
 
-static inline int BTREE_FN(init)(BTREE_TYPE_HEAD *head)
+static inline int BTREE_FN(init)(PMEMobjpool *pop, BTREE_TYPE_HEAD *head)
 {
-	return pmem_btree_init(&head->h);
+	return pmem_btree_init(pop, &head->h);
 }
 
 static inline void BTREE_FN(destroy)(BTREE_TYPE_HEAD *head)

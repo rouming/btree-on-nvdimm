@@ -1,7 +1,8 @@
 # Makefile btree-on-nvdimm tool
 
 CC = $(CROSS_COMPILE)gcc
-DEFINES = -I3rdparty/pmdk/src/include -I3rdparty/pmdk/src/examples
+DEFINES = -I3rdparty/pmdk/src/include -I3rdparty/pmdk/src/common \
+          -I3rdparty/pmdk/src/ -I3rdparty/pmdk/src/examples
 
 LIBDIR = 3rdparty/pmdk/src/nondebug
 CFLAGS = -O2 -g -Wall

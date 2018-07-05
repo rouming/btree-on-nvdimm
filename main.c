@@ -274,7 +274,7 @@ POBJ_LAYOUT_ROOT(pmem_btree_root, struct pmem_btree_root);
 POBJ_LAYOUT_END(pmem_btree_root);
 
 struct pmem_btree_root {
-	struct pmem_btree_head128 btree;
+	struct pmem_btree_head128 head;
 };
 
 struct pmem_btree {
@@ -287,6 +287,7 @@ static int pmem_btree128_init(struct tree_ops *ops)
 {
 	struct pmem_btree *btree;
 	const char *path = "./mem";
+	bool created = false;
 	PMEMobjpool *pop;
 	int rc;
 
@@ -311,9 +312,13 @@ static int pmem_btree128_init(struct tree_ops *ops)
 			perror("failed to open pool\n");
 			return -1;
 		}
+		created = true;
 	}
-	btree->pop  = pop;
+	btree->pop = pop;
 	btree->root = POBJ_ROOT(pop, struct pmem_btree_root);
+	if (created)
+		pmem_btree_init128(pop, &D_RW(btree->root)->head);
+
 
 	rc = 0;
 
