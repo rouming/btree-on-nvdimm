@@ -155,7 +155,7 @@ static struct tree_ops mem_btree_ops = {
 };
 
 POBJ_LAYOUT_BEGIN(pmem_btree_root);
-POBJ_LAYOUT_ROOT(two_lists, struct pmem_btree_root);
+POBJ_LAYOUT_ROOT(pmem_btree_root, struct pmem_btree_root)
 POBJ_LAYOUT_END(pmem_btree_root);
 
 struct pmem_btree_root {
@@ -194,14 +194,14 @@ static int pmem_btree_init(struct tree_ops *ops)
 
 	if (access(path, F_OK) != 0) {
 		if ((pop = pmemobj_create(path,
-					  POBJ_LAYOUT_NAME(btree_on_nvdimm),
+					  POBJ_LAYOUT_NAME(pmem_btree_root),
 					  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			perror("failed to create pool\n");
 			return -1;
 		}
 	} else {
 		if ((pop = pmemobj_open(path,
-					POBJ_LAYOUT_NAME(btree_on_nvdimm))) == NULL) {
+					POBJ_LAYOUT_NAME(pmem_btree_root))) == NULL) {
 			perror("failed to open pool\n");
 			return -1;
 		}
@@ -302,6 +302,117 @@ int main(int argc, char *argv[])
 	}
 
 	btree.ops.deinit(&btree.ops);
+
+	return 0;
+}
+
+
+struct big_struct {
+	int v1;
+	int v2;
+};
+
+struct small_struct {
+	double a;
+	double b;
+};
+
+POBJ_LAYOUT_BEGIN(test_root);
+POBJ_LAYOUT_ROOT(test_root, struct test_root);
+POBJ_LAYOUT_TOID(test_root, struct big_struct);
+POBJ_LAYOUT_TOID(test_root, struct small_struct);
+POBJ_LAYOUT_END(test_root);
+
+struct test_root {
+	TOID(struct big_struct) big;
+	TOID(struct small_struct) small;
+	int done;
+};
+
+int pmem_experiments_main(int argc, char *argv[])
+{
+	TOID(struct test_root) root_toid;
+	struct test_root *root;
+	const struct small_struct *small;
+	const struct big_struct *big;
+
+	const char *path = "./mem";
+	PMEMobjpool *pop;
+
+	if (access(path, F_OK) != 0) {
+		if ((pop = pmemobj_create(path,
+					  POBJ_LAYOUT_NAME(btree_on_nvdimm),
+					  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			perror("failed to create pool\n");
+			return -1;
+		}
+		printf(">> created\n");
+	} else {
+		if ((pop = pmemobj_open(path,
+					POBJ_LAYOUT_NAME(btree_on_nvdimm))) == NULL) {
+			perror("failed to open pool\n");
+			return -1;
+		}
+		printf(">> opened\n");
+	}
+
+	root_toid = POBJ_ROOT(pop, struct test_root);
+	root = D_RW(root_toid);
+
+	printf(">>> small=%p\n", D_RO(root->small));
+	printf(">>> big=%p\n", D_RO(root->big));
+
+	TX_BEGIN(pop) {
+		TX_BEGIN(pop) {
+			pmemobj_tx_add_range_direct(root, sizeof(*root));
+			if (TOID_IS_NULL(root->small)) {
+				struct small_struct *small;
+				printf(">> small is invalid\n");
+				root->small = TX_NEW(struct small_struct);
+				small = D_RW(root->small);
+				small->a = 666.666;
+				small->b = 11.22;
+			}
+			if (TOID_IS_NULL(root->big)) {
+				struct big_struct *big;
+
+				printf(">> big is invalid\n");
+				root->big = TX_NEW(struct big_struct);
+				big = D_RW(root->big);
+				big->v1 = 11;
+				big->v2 = 22;
+
+			}
+
+			root->done = 6666;
+
+		} TX_ONCOMMIT {
+			printf(">>>>>>>> COMMIT\n");
+		} TX_ONABORT {
+			printf(">>>>>>>> ABORT\n");
+		} TX_FINALLY {
+			printf(">>>>>>>> FINALLY\n");
+		} TX_END;
+
+//XXX		pmemobj_tx_abort(-1);
+	}
+	TX_ONCOMMIT {
+		printf(">>>>>>>> COMMIT outer\n");
+	} TX_ONABORT {
+		printf(">>>>>>>> ABORT outer\n");
+	} TX_FINALLY {
+		printf(">>>>>>>> FINALLY outer\n");
+	} TX_END;
+
+	small = D_RO(root->small);
+	big   = D_RO(root->big);
+
+	printf(">>> small=%p\n", small);
+	printf(">>> big  =%p\n", big);
+
+	printf(">>> done=%d, v1=%d, v2=%d, a=%f, b=%f\n",
+	       root->done,
+	       big->v1, big->v2, small->a, small->b);
 
 	return 0;
 }
