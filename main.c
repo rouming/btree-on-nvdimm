@@ -15,6 +15,7 @@
 
 #include "types.h"
 #include "btree.h"
+#include "pmem-btree.h"
 #include "libpmemobj/tree_map/btree_map.h"
 
 //#define MAX_UUIDS_PER_MEASURE 1000000
@@ -120,6 +121,10 @@ struct tree_ops {
 	int (*insert)(struct tree_ops *ops, uint64_t keys[2], uint64_t val);
 };
 
+/*
+ * B+Tree in memory
+ */
+
 struct mem_btree {
 	struct tree_ops ops;
 	struct btree_head128 btree;
@@ -154,21 +159,26 @@ static struct tree_ops mem_btree_ops = {
 	.insert = mem_btree_insert
 };
 
-POBJ_LAYOUT_BEGIN(pmem_btree_root);
-POBJ_LAYOUT_ROOT(pmem_btree_root, struct pmem_btree_root)
-POBJ_LAYOUT_END(pmem_btree_root);
+/*
+ * BTree on pmem, textbook example taken from libpmemobj/tree_map/btree_map.c
+ * Can't add >20K keys
+ */
 
-struct pmem_btree_root {
+POBJ_LAYOUT_BEGIN(pmem_EX_btree_root);
+POBJ_LAYOUT_ROOT(pmem_EX_btree_root, struct pmem_EX_btree_root)
+POBJ_LAYOUT_END(pmem_EX_btree_root);
+
+struct pmem_EX_btree_root {
 	TOID(struct btree_map) btree;
 };
 
-struct pmem_btree {
+struct pmem_EX_btree {
 	struct tree_ops ops;
 	PMEMobjpool *pop;
-	TOID(struct pmem_btree_root) root;
+	TOID(struct pmem_EX_btree_root) root;
 };
 
-static int pmem_count(uint64_t key, PMEMoid value, void *arg)
+static int pmem_EX_count(uint64_t key, PMEMoid value, void *arg)
 {
 	unsigned *cnt = arg;
 
@@ -177,7 +187,103 @@ static int pmem_count(uint64_t key, PMEMoid value, void *arg)
 	return 0;
 }
 
-static int pmem_btree_init(struct tree_ops *ops)
+static int pmem_EX_btree_init(struct tree_ops *ops)
+{
+	struct pmem_EX_btree *btree;
+	const char *path = "./mem";
+	PMEMobjpool *pop;
+	int rc;
+
+	//XXX
+//	unlink(path);
+
+	/* Do not msync() */
+	setenv("PMEM_IS_PMEM_FORCE", "1", 1);
+
+	btree = container_of(ops, typeof(*btree), ops);
+
+	if (access(path, F_OK) != 0) {
+		if ((pop = pmemobj_create(path,
+					  POBJ_LAYOUT_NAME(pmem_EX_btree_root),
+					  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			perror("failed to create pool\n");
+			return -1;
+		}
+	} else {
+		if ((pop = pmemobj_open(path,
+					POBJ_LAYOUT_NAME(pmem_EX_btree_root))) == NULL) {
+			perror("failed to open pool\n");
+			return -1;
+		}
+	}
+
+	btree->pop  = pop;
+	btree->root = POBJ_ROOT(pop, struct pmem_EX_btree_root);
+
+	rc = btree_map_check(btree->pop, D_RO(btree->root)->btree);
+	if (rc)
+		rc = btree_map_create(btree->pop, &D_RW(btree->root)->btree, NULL);
+	else {
+		unsigned cnt = 0;
+		btree_map_foreach(btree->pop, D_RO(btree->root)->btree,
+				  pmem_EX_count, &cnt);
+		printf(">>> count=%d\n", cnt);
+	}
+
+	return rc;
+}
+
+static void pmem_EX_btree_deinit(struct tree_ops *ops)
+{
+	struct pmem_EX_btree *btree;
+
+	btree = container_of(ops, typeof(*btree), ops);
+	pmemobj_close(btree->pop);
+}
+
+static int pmem_EX_btree_insert(struct tree_ops *ops, uint64_t keys[2],
+			     uint64_t val)
+{
+	struct pmem_EX_btree *btree;
+	int rc;
+
+	btree = container_of(ops, typeof(*btree), ops);
+
+	rc = btree_map_lookup(btree->pop, D_RO(btree->root)->btree, keys[0]);
+	if (rc) {
+		printf(">>>> exists: %lx\n", keys[0]);
+		assert(0);
+	}
+
+	return btree_map_insert(btree->pop, D_RO(btree->root)->btree,
+				keys[0], OID_NULL);
+}
+
+static struct tree_ops pmem_EX_btree_ops = {
+	.init   = pmem_EX_btree_init,
+	.deinit = pmem_EX_btree_deinit,
+	.insert = pmem_EX_btree_insert
+};
+
+/*
+ * B+Tree on pmem
+ */
+
+POBJ_LAYOUT_BEGIN(pmem_btree_root);
+POBJ_LAYOUT_ROOT(pmem_btree_root, struct pmem_btree_root);
+POBJ_LAYOUT_END(pmem_btree_root);
+
+struct pmem_btree_root {
+	struct pmem_btree_head128 btree;
+};
+
+struct pmem_btree {
+	struct tree_ops ops;
+	PMEMobjpool *pop;
+	TOID(struct pmem_btree_root) root;
+};
+
+static int pmem_btree128_init(struct tree_ops *ops)
 {
 	struct pmem_btree *btree;
 	const char *path = "./mem";
@@ -185,7 +291,7 @@ static int pmem_btree_init(struct tree_ops *ops)
 	int rc;
 
 	//XXX
-//	unlink(path);
+	unlink(path);
 
 	/* Do not msync() */
 	setenv("PMEM_IS_PMEM_FORCE", "1", 1);
@@ -206,24 +312,15 @@ static int pmem_btree_init(struct tree_ops *ops)
 			return -1;
 		}
 	}
-
 	btree->pop  = pop;
 	btree->root = POBJ_ROOT(pop, struct pmem_btree_root);
 
-	rc = btree_map_check(btree->pop, D_RO(btree->root)->btree);
-	if (rc)
-		rc = btree_map_create(btree->pop, &D_RW(btree->root)->btree, NULL);
-	else {
-		unsigned cnt = 0;
-		btree_map_foreach(btree->pop, D_RO(btree->root)->btree,
-				  pmem_count, &cnt);
-		printf(">>> count=%d\n", cnt);
-	}
+	rc = 0;
 
 	return rc;
 }
 
-static void pmem_btree_deinit(struct tree_ops *ops)
+static void pmem_btree128_deinit(struct tree_ops *ops)
 {
 	struct pmem_btree *btree;
 
@@ -231,29 +328,26 @@ static void pmem_btree_deinit(struct tree_ops *ops)
 	pmemobj_close(btree->pop);
 }
 
-static int pmem_btree_insert(struct tree_ops *ops, uint64_t keys[2],
-			     uint64_t val)
+static int pmem_btree128_insert(struct tree_ops *ops, uint64_t keys[2],
+				uint64_t val)
 {
 	struct pmem_btree *btree;
 	int rc;
 
 	btree = container_of(ops, typeof(*btree), ops);
 
-	rc = btree_map_lookup(btree->pop, D_RO(btree->root)->btree, keys[0]);
-	if (rc) {
-		printf(">>>> exists: %lx\n", keys[0]);
-		assert(0);
-	}
+	rc = 0;
 
-	return btree_map_insert(btree->pop, D_RO(btree->root)->btree,
-				keys[0], OID_NULL);
+	return rc;
 }
 
 static struct tree_ops pmem_btree_ops = {
-	.init   = pmem_btree_init,
-	.deinit = pmem_btree_deinit,
-	.insert = pmem_btree_insert
+	.init   = pmem_btree128_init,
+	.deinit = pmem_btree128_deinit,
+	.insert = pmem_btree128_insert
 };
+
+/******************** MAIN **************************************************/
 
 int main(int argc, char *argv[])
 {
@@ -265,6 +359,11 @@ int main(int argc, char *argv[])
 	__attribute__((unused))
 	struct mem_btree btree1 = {
 		.ops = mem_btree_ops
+	};
+
+	__attribute__((unused))
+	struct pmem_EX_btree btree2 = {
+		.ops = pmem_EX_btree_ops
 	};
 
 	struct pmem_btree btree = {
@@ -306,6 +405,8 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
+
+/*****************************************************************************/
 
 struct big_struct {
 	int v1;
