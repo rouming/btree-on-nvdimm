@@ -48,7 +48,7 @@
 //#include <linux/module.h>
 
 //#define NODESIZE MAX(L1_CACHE_BYTES, 128)
-#define NODESIZE 1024
+#define NODESIZE 64
 
 struct pmem_btree_geo {
 	int keylen;
@@ -532,7 +532,7 @@ static void dump_node(unsigned long *node, struct pmem_btree_geo *geo)
 		else
 			printf("v%d.NULL ", i);
 	}
-	printf("\n");
+	printf("N=%d\n", get_sz(geo, node));
 }
 
 static void __dump_btree(unsigned long *node, int height,

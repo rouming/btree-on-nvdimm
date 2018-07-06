@@ -22,8 +22,8 @@
 //#define MAX_UUIDS 300000000ull /* 300 mln */
 //#define MAX_UUIDS MAX_UUIDS_PER_MEASURE
 
-#define MAX_UUIDS_PER_MEASURE 100
-#define MAX_UUIDS 300
+#define MAX_UUIDS_PER_MEASURE 2
+#define MAX_UUIDS 10
 
 
 static double clk_per_nsec;
@@ -119,6 +119,7 @@ struct tree_ops {
 	int (*init)(struct tree_ops *ops);
 	void (*deinit)(struct tree_ops *ops);
 	int (*insert)(struct tree_ops *ops, uint64_t keys[2], uint64_t val);
+	void (*dump)(struct tree_ops *ops);
 };
 
 /*
@@ -350,15 +351,27 @@ static int pmem_btree128_insert(struct tree_ops *ops, uint64_t keys[2],
 	return rc;
 }
 
+static void pmem_btree128_dump(struct tree_ops *ops)
+{
+	struct pmem_btree_root *root;
+	struct pmem_btree *btree;
+
+	btree = container_of(ops, typeof(*btree), ops);
+	root = D_RW(btree->root);
+
+	pmem_dump_btree(&root->head.h);
+}
+
 static struct tree_ops pmem_btree_ops = {
 	.init   = pmem_btree128_init,
 	.deinit = pmem_btree128_deinit,
-	.insert = pmem_btree128_insert
+	.insert = pmem_btree128_insert,
+	.dump   = pmem_btree128_dump
 };
 
 /******************** MAIN **************************************************/
 
-int main(int argc, char *argv[])
+int FFmain(int argc, char *argv[])
 {
 	unsigned long long ns, num, rss;
 	uuid_t *many_uuids;
@@ -396,6 +409,8 @@ int main(int argc, char *argv[])
 		for (i = 0; i < MAX_UUIDS_PER_MEASURE; i++) {
 			u64 *keys = (void *)many_uuids[i];
 			rc = btree.ops.insert(&btree.ops, keys, 666);
+			if (rc)
+				printf(">>>> num %lld, i=%d\n", num, i);
 			assert(rc == 0);
 		}
 		ns = nsecs() - ns;
@@ -409,6 +424,7 @@ int main(int argc, char *argv[])
 		       ns/1000/1000, thd_psec, rss >> 20);
 	}
 
+	btree.ops.dump(&btree.ops);
 	btree.ops.deinit(&btree.ops);
 
 	return 0;
@@ -527,7 +543,7 @@ int pmem_experiments_main(int argc, char *argv[])
 	return 0;
 }
 
-int experiments_main()
+int main()
 {
 	if (0)
 	{
@@ -554,6 +570,59 @@ int experiments_main()
 
 		return 0;
 	}
+
+	if (1)
+	{
+		struct pmem_btree_head128 btree;
+		const char *path = "./test-mem";
+		struct pmem_btree_root *root;
+		unsigned long long keys[2];
+		PMEMobjpool *pop;
+		int rc;
+
+		//XXX
+		unlink(path);
+
+		if (access(path, F_OK) != 0) {
+			pop = pmemobj_create(path, POBJ_LAYOUT_NAME(test),
+					     8ull<<20, 0666);
+			assert(pop);
+		} else {
+			pop = pmemobj_open(path, POBJ_LAYOUT_NAME(test));
+			assert(pop);
+		}
+
+		root = D_RW(POBJ_ROOT(pop, struct pmem_btree_root));
+
+		TX_BEGIN(pop) {
+
+		pmem_btree_init128(pop, &root->head);
+
+		keys[0] = 10;
+		keys[1] = 10;
+
+		rc = pmem_btree_insert128(&btree, keys[0], keys[1], (void *)0xaaaa, 0);
+		assert(rc == 0);
+
+		keys[0] = 5;
+		keys[1] = 5;
+
+		rc = pmem_btree_insert128(&btree, keys[0], keys[1], (void *)0xaaaa, 0);
+		assert(rc == 0);
+
+		keys[0] = 4;
+		keys[1] = 4;
+
+		rc = pmem_btree_insert128(&btree, keys[0], keys[1], (void *)0xaaaa, 0);
+		assert(rc == 0);
+
+		pmem_dump_btree128(&btree);
+
+		} TX_END;
+
+		return 0;
+	}
+
 
 	if (0)
 	{

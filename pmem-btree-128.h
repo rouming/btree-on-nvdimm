@@ -82,6 +82,11 @@ static inline void *pmem_btree_last128(struct pmem_btree_head128 *head,
 	return val;
 }
 
+static inline void pmem_dump_btree128(struct pmem_btree_head128 *head)
+{
+	pmem_dump_btree(&head->h);
+}
+
 static inline int pmem_btree_merge128(struct pmem_btree_head128 *target,
 				      struct pmem_btree_head128 *victim,
 				      gfp_t gfp)

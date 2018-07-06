@@ -235,6 +235,7 @@ size_t pmem_btree_grim_visitor(struct pmem_btree_head *head,
 					    size_t index, void *func2),
 			       void *func2);
 
+void pmem_dump_btree(struct pmem_btree_head *head);
 
 #include "pmem-btree-128.h"
 
