@@ -302,7 +302,7 @@ static int pmem_btree128_init(struct tree_ops *ops)
 	if (access(path, F_OK) != 0) {
 		if ((pop = pmemobj_create(path,
 					  POBJ_LAYOUT_NAME(pmem_btree_root),
-					  PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+					  16ull<<30, 0666)) == NULL) {
 			perror("failed to create pool\n");
 			return -1;
 		}
@@ -337,11 +337,15 @@ static int pmem_btree128_insert(struct tree_ops *ops, uint64_t keys[2],
 				uint64_t val)
 {
 	struct pmem_btree *btree;
-	int rc;
+	struct pmem_btree_root *root;
+	volatile int rc = -ENOMEM;
 
 	btree = container_of(ops, typeof(*btree), ops);
-
-	rc = 0;
+	root = D_RW(btree->root);
+	TX_BEGIN(btree->pop) {
+		rc = pmem_btree_insert128(&root->head, keys[0], keys[1],
+					  (void *)val, 0);
+	} TX_END;
 
 	return rc;
 }

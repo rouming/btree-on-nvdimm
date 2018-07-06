@@ -78,32 +78,44 @@ struct pmem_btree_geo pmem_btree_geo128 = {
 };
 EXPORT_SYMBOL_GPL(pmem_btree_geo128);
 
-/*
-static struct kmem_cache *pmem_btree_cachep;
+typedef uint64_t pmem_ptr_t;
 
-void *pmem_btree_alloc(gfp_t gfp_mask, void *pool_data)
+static inline unsigned long *to_ulong(const struct pmem_btree_head *head,
+                                      pmem_ptr_t ptr)
 {
-	return kmem_cache_alloc(pmem_btree_cachep, gfp_mask);
+       return (void *)head->pop + ptr;
 }
-EXPORT_SYMBOL_GPL(pmem_btree_alloc);
 
-void pmem_btree_free(void *element, void *pool_data)
+static inline pmem_ptr_t to_pmemptr(const struct pmem_btree_head *head,
+				    void *ptr)
 {
-	kmem_cache_free(pmem_btree_cachep, element);
+	pmem_ptr_t ret;
+
+	ret = (pmem_ptr_t)ptr - (pmem_ptr_t)head->pop;
+	BUG_ON(ret <= 0);
+
+	return ret;
 }
-EXPORT_SYMBOL_GPL(pmem_btree_free);
-*/
+
+static inline PMEMoid to_pmemoid(const struct pmem_btree_head *head,
+				 void *ptr)
+{
+	PMEMoid pmemoid = {
+		.pool_uuid_lo = head->pop->uuid_lo,
+		.off = to_pmemptr(head, ptr)
+	};
+
+	return pmemoid;
+}
 
 static unsigned long *pmem_btree_node_alloc(struct pmem_btree_head *head,
 					    gfp_t gfp)
 {
-	unsigned long *node;
+	PMEMoid node = pmemobj_tx_zalloc(NODESIZE, 0);
 
-	node = malloc(NODESIZE);
-//	node = mempool_alloc(head->mempool, gfp);
-	if (likely(node))
-		memset(node, 0, NODESIZE);
-	return node;
+	//XXX TX
+
+	return pmemobj_direct(node);
 }
 
 static int longcmp(const unsigned long *l1, const unsigned long *l2, size_t n)
@@ -124,6 +136,8 @@ static unsigned long *longcpy(unsigned long *dest, const unsigned long *src,
 {
 	size_t i;
 
+	//XXX TX
+
 	for (i = 0; i < n; i++)
 		dest[i] = src[i];
 	return dest;
@@ -132,6 +146,8 @@ static unsigned long *longcpy(unsigned long *dest, const unsigned long *src,
 static unsigned long *longset(unsigned long *s, unsigned long c, size_t n)
 {
 	size_t i;
+
+	//XXX TX
 
 	for (i = 0; i < n; i++)
 		s[i] = c;
@@ -142,6 +158,8 @@ static void dec_key(struct pmem_btree_geo *geo, unsigned long *key)
 {
 	unsigned long val;
 	int i;
+
+	//XXX TX
 
 	for (i = geo->keylen - 1; i >= 0; i--) {
 		val = key[i];
@@ -157,7 +175,8 @@ static unsigned long *bkey(struct pmem_btree_geo *geo, unsigned long *node,
 	return &node[n * geo->keylen];
 }
 
-static void *bval(struct pmem_btree_geo *geo, unsigned long *node, int n)
+static void *bval(struct pmem_btree_geo *geo,
+		  unsigned long *node, int n)
 {
 	return (void *)node[geo->no_longs + n];
 }
@@ -165,12 +184,16 @@ static void *bval(struct pmem_btree_geo *geo, unsigned long *node, int n)
 static void setkey(struct pmem_btree_geo *geo, unsigned long *node, int n,
 		   unsigned long *key)
 {
+	//XXX TX
+
 	longcpy(bkey(geo, node, n), key, geo->keylen);
 }
 
 static void setval(struct pmem_btree_geo *geo, unsigned long *node, int n,
 		   void *val)
 {
+	//XXX TX
+
 	node[geo->no_longs + n] = (unsigned long) val;
 }
 
@@ -185,11 +208,16 @@ static void set_sz(struct pmem_btree_geo *geo,  unsigned long *node, unsigned ch
 {
 //	printf("set_sz(%d), no_longs=%d, no_pairs=%d\n",
 //		   sz, geo->no_longs, geo->no_pairs);
+
+	//XXX TX
+
 	*(unsigned char *)&node[geo->no_longs + geo->no_pairs] = sz;
 }
 
 static void clearpair(struct pmem_btree_geo *geo, unsigned long *node, int n)
 {
+	//XXX TX
+
 	longset(bkey(geo, node, n), 0, geo->keylen);
 	node[geo->no_longs + n] = 0;
 }
@@ -199,7 +227,7 @@ static inline void __pmem_btree_init(PMEMobjpool *pop,
 {
 	//XXX TX
 
-	head->node = NULL_PTR;
+	head->node = NULL;
 	head->height = 0;
 	head->pop = pop;
 }
@@ -214,10 +242,7 @@ EXPORT_SYMBOL_GPL(pmem_btree_init);
 
 void pmem_btree_destroy(struct pmem_btree_head *head)
 {
-//	mempool_free(head->node, head->mempool);
-	free(head->node);
-//	mempool_destroy(head->mempool);
-//	head->mempool = NULL;
+	pmemobj_tx_free(to_pmemoid(head, head->node));
 }
 EXPORT_SYMBOL_GPL(pmem_btree_destroy);
 
@@ -231,7 +256,9 @@ void *pmem_btree_last(struct pmem_btree_head *head, struct pmem_btree_geo *geo,
 		return NULL;
 
 	for ( ; height > 1; height--)
-		node = bval(geo, node, 0);
+		node = to_ulong(head, (pmem_ptr_t)bval(geo, node, 0));
+
+	//XXX TX
 
 	longcpy(key, bkey(geo, node, 0), geo->keylen);
 	return bval(geo, node, 0);
@@ -274,7 +301,7 @@ void *pmem_btree_lookup(struct pmem_btree_head *head, struct pmem_btree_geo *geo
 				break;
 		if (i == geo->no_pairs)
 			return NULL;
-		node = bval(geo, node, i);
+		node = to_ulong(head, (pmem_ptr_t)bval(geo, node, i));
 		if (!node)
 			return NULL;
 	}
@@ -304,7 +331,7 @@ int pmem_btree_update(struct pmem_btree_head *head, struct pmem_btree_geo *geo,
 				break;
 		if (i == geo->no_pairs)
 			return -ENOENT;
-		node = bval(geo, node, i);
+		node = to_ulong(head, (pmem_ptr_t)bval(geo, node, i));
 		if (!node)
 			return -ENOENT;
 	}
@@ -354,7 +381,7 @@ retry:
 		if (i == geo->no_pairs)
 			goto miss;
 		oldnode = node;
-		node = bval(geo, node, i);
+		node = to_ulong(head, (pmem_ptr_t)bval(geo, node, i));
 		if (!node)
 			goto miss;
 		retry_key = bkey(geo, oldnode, i);
@@ -472,7 +499,7 @@ static unsigned long *find_level(struct pmem_btree_head *head,
 			setkey(geo, node, i, key);
 		}
 		BUG_ON(i < 0);
-		node = bval(geo, node, i);
+		node = to_ulong(head, (pmem_ptr_t)bval(geo, node, i));
 	}
 	__builtin_prefetch(node);
 //	__builtin_prefetch(node + 10);
@@ -508,7 +535,9 @@ static void dump_node(unsigned long *node, struct pmem_btree_geo *geo)
 	printf("\n");
 }
 
-static void __dump_btree(unsigned long *node, int height, struct pmem_btree_geo *geo)
+static void __dump_btree(unsigned long *node, int height,
+			 struct pmem_btree_geo *geo,
+			 struct pmem_btree_head *head)
 {
 	int i;
 
@@ -518,9 +547,14 @@ static void __dump_btree(unsigned long *node, int height, struct pmem_btree_geo 
 		return;
 
 	for (i = 0; i < geo->no_pairs; i++) {
-		u64 *ptr = bval(geo, node, i);
+		u64 *ptr;
+
+		if (height > 1)
+			ptr = to_ulong(head, (pmem_ptr_t)bval(geo, node, i));
+		else
+			ptr = bval(geo, node, i);
 		if (ptr)
-			__dump_btree(ptr, height - 1, geo);
+			__dump_btree(ptr, height - 1, geo, head);
 	}
 }
 
@@ -535,7 +569,7 @@ void pmem_dump_btree(struct pmem_btree_head *head)
 	if (height == 0)
 		return;
 
-	__dump_btree(head->node, height - 1, &pmem_btree_geo128);
+	__dump_btree(head->node, height - 1, &pmem_btree_geo128, head);
 }
 
 static int pmem_btree_grow(struct pmem_btree_head *head,
@@ -555,7 +589,7 @@ static int pmem_btree_grow(struct pmem_btree_head *head,
 //			   bkey(geo, head->node, fill - 1)[0]);
 		/* Get last key */
 		setkey(geo, node, 0, bkey(geo, head->node, fill - 1));
-		setval(geo, node, 0, head->node);
+		setval(geo, node, 0, (void *)to_pmemptr(head, head->node));
 		set_sz(geo, node, 1);
 	}
 	head->node = node;
@@ -575,10 +609,9 @@ static void pmem_btree_shrink(struct pmem_btree_head *head,
 	node = head->node;
 	fill = getfill(geo, node, 0);
 	BUG_ON(fill > 1);
-	head->node = bval(geo, node, 0);
+	head->node = to_ulong(head, (pmem_ptr_t)bval(geo, node, 0));
 	head->height--;
-//	mempool_free(node, head->mempool);
-	free(node);
+	pmemobj_tx_free(to_pmemoid(head, node));
 }
 
 static int pmem_btree_insert_level(struct pmem_btree_head *head,
@@ -614,8 +647,7 @@ retry:
 				bkey(geo, node, fill / 2 - 1),
 				new, level + 1, gfp);
 		if (err) {
-//			mempool_free(new, head->mempool);
-			free(new);
+			pmemobj_tx_free(to_pmemoid(head, new));
 			return err;
 		}
 		for (i = 0; i < fill / 2; i++) {
@@ -676,12 +708,11 @@ static void merge(struct pmem_btree_head *head, struct pmem_btree_geo *geo,
 		setval(geo, left, lfill + i, bval(geo, right, i));
 	}
 	/* Exchange left and right child in parent */
-	setval(geo, parent, lpos, right);
-	setval(geo, parent, lpos + 1, left);
+	setval(geo, parent, lpos, (void *)to_pmemptr(head, right));
+	setval(geo, parent, lpos + 1, (void *)to_pmemptr(head, left));
 	/* Remove left (formerly right) child from parent */
 	pmem_btree_remove_level(head, geo, bkey(geo, parent, lpos), level + 1);
-//	mempool_free(right, head->mempool);
-	free(right);
+	pmemobj_tx_free(to_pmemoid(head, right));
 }
 
 static void rebalance(struct pmem_btree_head *head, struct pmem_btree_geo *geo,
@@ -696,8 +727,7 @@ static void rebalance(struct pmem_btree_head *head, struct pmem_btree_geo *geo,
 		 * node, so merging with a sibling never happens.
 		 */
 		pmem_btree_remove_level(head, geo, key, level + 1);
-//		mempool_free(child, head->mempool);
-		free(child);
+		pmemobj_tx_free(to_pmemoid(head, child));
 		return;
 	}
 
@@ -756,7 +786,10 @@ static void *pmem_btree_remove_level(struct pmem_btree_head *head,
 	fill = getfill(geo, node, pos);
 	if ((level == 1) && (keycmp(geo, node, pos, key) != 0))
 		return NULL;
-	ret = bval(geo, node, pos);
+	if (level > 1)
+		ret = to_ulong(head, (pmem_ptr_t)bval(geo, node, pos));
+	else
+		ret = bval(geo, node, pos);
 
 	/* remove and shift */
 	for (i = pos; i < fill - 1; i++) {
@@ -837,7 +870,10 @@ static size_t __pmem_btree_for_each(struct pmem_btree_head *head,
 	unsigned long *child;
 
 	for (i = 0; i < geo->no_pairs; i++) {
-		child = bval(geo, node, i);
+		if (height > 1)
+			child = to_ulong(head, (pmem_ptr_t)bval(geo, node, i));
+		else
+			child = bval(geo, node, i);
 		if (!child)
 			break;
 		if (height > 1)
@@ -848,8 +884,8 @@ static size_t __pmem_btree_for_each(struct pmem_btree_head *head,
 					func2);
 	}
 	if (reap)
-		free(node);
-//		mempool_free(node, head->mempool);
+		pmemobj_tx_free(to_pmemoid(head, node));
+
 	return count;
 }
 
